@@ -4,9 +4,10 @@
 
 <script lang="ts">
 import { v4 as uuid } from 'uuid'
-import { Feature, Position } from 'geojson'
+import { BBox, Feature, Point, Position } from 'geojson'
 import { Expression, GeoJSONSource, Map, MapboxGeoJSONFeature } from 'mapbox-gl'
 import { defineComponent } from 'vue'
+import Supercluster, { PointFeature } from 'supercluster'
 
 type Nullable<T> = T | null
 
@@ -37,7 +38,7 @@ export default defineComponent({
     return { map: null as Nullable<Map> }
   },
   async mounted() {
-    this.demo2()
+    this.demo3()
   },
   beforeUnmount() {
     this.map?.remove()
@@ -87,10 +88,10 @@ export default defineComponent({
       // Adding more features is possible by using the "setData" method that
       // takes all of features and replaces the "data".
       const source = this.map.getSource('markers') as GeoJSONSource
-      source.setData({
-        type: 'FeatureCollection',
-        features: markers.map(toPointFeature),
-      })
+      // source.setData({
+      //   type: 'FeatureCollection',
+      //   features: markers.map(toPointFeature),
+      // })
 
       const ifFeatureStateElse = <T>(state: string, trueValue: T, falseValue: T) => ([
         // case is simple: [case, condition, true-value, false-value]
@@ -208,8 +209,10 @@ export default defineComponent({
       this.map = new Map({
         container: this.$refs.map as HTMLElement,
         style: 'mapbox://styles/mapbox/streets-v11',
-        center: [18.656409506876486, 50.32529164143756],
-        zoom: 10
+        // center: [18.656409506876486, 50.32529164143756],
+        center: [8.1, 46.8],
+        // zoom: 10
+        zoom: 7.5
       })
 
       // make sure we wait for the map to initialize
@@ -222,10 +225,7 @@ export default defineComponent({
         data: {
           type: 'FeatureCollection',
           features: []
-        },
-        cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 100
+        }
       });
 
       // Create layer for actual markers
@@ -289,7 +289,8 @@ export default defineComponent({
 
       console.timeEnd('Initialization')
 
-      const NUMBER_OF_MARKERS = 200000
+      const NUMBER_OF_MARKERS = 500000
+      const home = this.map.getCenter()
 
       console.time('Creating ' + NUMBER_OF_MARKERS + ' random marker points')
       const markers = new Array(NUMBER_OF_MARKERS).fill({ lat: 0, lon: 0, id: 0 }).map(marker => {
@@ -298,8 +299,8 @@ export default defineComponent({
 
         return {
           id: uuid(),
-          lat: 50.32529164143756 + r * Math.cos(theta),
-          lon: 18.656409506876486 + r * Math.sin(theta) * 2,
+          lat: home.lat + r * Math.cos(theta),
+          lon: home.lng + r * Math.sin(theta) * 2,
         }
       })
       console.timeEnd('Creating ' + NUMBER_OF_MARKERS + ' random marker points')
@@ -332,19 +333,116 @@ export default defineComponent({
       const data = markers.map(toPointFeature)
       console.timeEnd('Converting data to features of ' + markers.length + ' markers (markers.map(toPointFeature))')
 
-      setTimeout(async () => {
+      console.time('Creating supercluster')
+      const supercluster = new Supercluster({
+        log: true,
+        radius: 100,
+        extent: 128,
+        minZoom: 4,
+        maxZoom: 14
+      }).load(data as PointFeature<any>[])
+      console.timeEnd('Creating supercluster')
+
+      const update = async () => {
         console.time('Updating mapbox with ' + markers.length + ' markers (source.setData())')
         console.time('Including waiting for "idle" event')
+        const bbox: BBox = this.map!.getBounds().toArray().flat() as BBox
+        console.log('bbox', bbox)
+        const zoom = this.map!.getZoom()
+        console.log('zoom', zoom)
+        const clusters = supercluster.getClusters(bbox, zoom)
+        console.log('clusters', clusters)
         source.setData({
           type: 'FeatureCollection',
-          features: data,
+          features: clusters
         })
         console.timeEnd('Updating mapbox with ' + markers.length + ' markers (source.setData())')
         await waitForEvent(this.map!, 'idle', { timeout: 10000 })
         console.timeEnd('Including waiting for "idle" event')
-      }, 1000)
+      }
 
-      console.log('Waiting for 1s for things to stabilize...')
+      update()
+
+      this.map!.on('moveend', update)
+    },
+    async demo3() {
+      console.time('Initialization')
+
+      this.map = new Map({
+        container: this.$refs.map as HTMLElement,
+        style: 'mapbox://styles/mapbox/streets-v11',
+        center: [8.1, 46.8],
+        zoom: 7.5
+      })
+
+      // make sure we wait for the map to initialize
+      await waitForEvent(this.map, 'load', { timeout: 10000 })
+
+      // Supercluster speaks GeoJSON so we create a GeoJSON source
+      // with an empty FeatureCollection.
+      this.map.addSource('markers', {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: []
+        }
+      });
+
+      // Create layer for actual markers
+      this.map.addLayer({
+        id: 'markers',
+        type: 'symbol',
+        source: 'markers',
+        filter: ['!', ['has', 'point_count']],
+        layout: {
+          'icon-image': 'tw-provincial-expy-2',
+          'icon-anchor': 'bottom'
+        }
+      });
+
+      // Create 2 layers for the clusters:
+      // Circle with matching size
+      this.map.addLayer({
+        id: 'cluster',
+        type: 'circle',
+        source: 'markers',
+        filter: ['has', 'point_count'],
+        paint: {
+          'circle-color': ['step', ['get', 'point_count'], '#51bbd6', 100, '#f1f075', 750, '#f28cb1'],
+          'circle-radius': ['step', ['get', 'point_count'], 20, 100, 30, 750, 40]
+        }
+      });
+      // Number of clustered markers
+      this.map.addLayer({
+        id: 'cluster-count',
+        type: 'symbol',
+        source: 'markers',
+        filter: ['has', 'point_count'],
+        layout: {
+          'text-field': '{point_count_abbreviated}',
+          'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+          'text-size': 12
+        }
+      });
+
+      const update = async () => {
+        console.time('Including waiting for "idle" event')
+        const source = this.map!.getSource('markers') as GeoJSONSource
+        const bbox: BBox = this.map!.getBounds().toArray().flat() as BBox
+        const zoom = this.map!.getZoom()
+        const url = `http://localhost:9000/${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}/${zoom}`
+        const clusters = await fetch(url).then(response => response.json())
+        source.setData({
+          type: 'FeatureCollection',
+          features: clusters
+        })
+        await waitForEvent(this.map!, 'idle', { timeout: 10000 })
+        console.timeEnd('Including waiting for "idle" event')
+      }
+
+      update()
+
+      this.map!.on('moveend', update)
     }
   }
 })
