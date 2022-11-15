@@ -1,0 +1,12 @@
+node_modules
+public
+.git
+.vscode
+.nvmrc
+README.md
+*.sh
+*.yml
+*.html
+tsconfig*.json
+*.ts
+

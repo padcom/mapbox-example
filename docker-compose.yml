@@ -1,0 +1,14 @@
+version: "2"
+
+services:
+  node:
+    image: "node:19"
+    user: "node"
+    working_dir: /usr/src/app
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./:/usr/src/app
+    ports:
+      - "9009:9009"
+    command: "node clustered-points-server.mjs"

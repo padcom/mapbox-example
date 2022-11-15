@@ -6,14 +6,8 @@ import cors from 'cors'
 import compression from 'compression'
 import fetch from 'node-fetch'
 
-// Pause for a moment because the FE host needs a bit to start serving files
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
-await sleep(500)
-
-const data = await fetch('http://localhost:5173/places.json.gz')
-  .then(response =>
-    response.json()
-    )
+const data = await fetch('https://aplaline.net/mapbox/places.json')
+  .then(response => response.json())
   .then(collection => collection.features)
 
 const supercluster = new Supercluster({
@@ -27,15 +21,16 @@ supercluster.load(data)
 
 const app = express()
 app.use(cors())
+app.use(express.static('./static', {  }))
 
-app.get('/:bbox/:zoom', (req, res) => {
+app.get('/:bbox/:zoom', async (req, res) => {
   const bbox = req.params.bbox.split(',').map(parseFloat)
   const zoom = Math.floor(parseFloat(req.params.zoom))
   const clusters = supercluster.getClusters(bbox, zoom)
   res.json(clusters)
 })
 
-const listener = app.listen(9000, () => {
+const listener = app.listen(9009, () => {
   console.log('Listening on', listener.address())
 })
 
